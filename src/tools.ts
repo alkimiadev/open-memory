@@ -1,15 +1,13 @@
 import type { PluginInput, ToolDefinition } from "@opencode-ai/plugin";
 import { tool } from "@opencode-ai/plugin";
 import type { ContextTracker } from "./context/tracker.js";
-import { formatSessionList, formatMessageList } from "./history/format.js";
+import { formatMessageList, formatSessionList } from "./history/format.js";
 import { runQuery } from "./history/queries.js";
 import { searchConversations } from "./history/search.js";
 
 const z = tool.schema;
 
 const DATA_ROOT = process.env.XDG_DATA_HOME || `${process.env.HOME}/.local/share/opencode`;
-const DB = `${DATA_ROOT}/opencode.db`;
-const DB_URI = `file:${DB}?mode=ro`;
 
 export const createTools = (
   ctx: PluginInput,
@@ -50,7 +48,9 @@ export const createTools = (
 
       if (info.status === "red" || info.status === "critical") {
         lines.push("");
-        lines.push("Recommendation: Use memory_compact to trigger compaction at a natural break point.");
+        lines.push(
+          "Recommendation: Use memory_compact to trigger compaction at a natural break point.",
+        );
       }
 
       return lines.join("\n");
@@ -133,7 +133,7 @@ export const createTools = (
     args: {},
     async execute() {
       try {
-        const rows = await runQuery(DB_URI, `
+        const rows = runQuery<Record<string, unknown>>(`
           SELECT 'projects', COUNT(*) FROM project
           UNION ALL SELECT 'sessions (main)', COUNT(*) FROM session WHERE parent_id IS NULL
           UNION ALL SELECT 'sessions (total)', COUNT(*) FROM session
@@ -159,47 +159,58 @@ export const createTools = (
       "List recent sessions with titles, update times, and message counts. Optionally filter by project path.",
     args: {
       limit: z.number().optional().describe("Number of sessions to show (default: 10)."),
-      projectPath: z
-        .string()
-        .optional()
-        .describe("Filter to a specific project worktree path."),
+      projectPath: z.string().optional().describe("Filter to a specific project worktree path."),
     },
     async execute(args) {
       const limit = args.limit ?? 10;
 
       try {
-        let query: string;
+        type SessionRow = {
+          id: string;
+          title: string;
+          project?: string;
+          updated: string;
+          msgs: number;
+        };
+
+        let rows: SessionRow[];
+
         if (args.projectPath) {
-          query = `
-            SELECT
-              s.id,
-              COALESCE(s.title, 'untitled') AS title,
-              datetime(s.time_updated/1000, 'unixepoch', 'localtime') AS updated,
-              (SELECT COUNT(*) FROM message m WHERE m.session_id = s.id) AS msgs
-            FROM session s
-            JOIN project p ON p.id = s.project_id
-            WHERE p.worktree = '${args.projectPath.replace(/'/g, "''")}'
-              AND s.parent_id IS NULL
-            ORDER BY s.time_updated DESC
-            LIMIT ${limit}
-          `;
+          rows = runQuery<SessionRow>(
+            `
+              SELECT
+                s.id,
+                COALESCE(s.title, 'untitled') AS title,
+                datetime(s.time_updated/1000, 'unixepoch', 'localtime') AS updated,
+                (SELECT COUNT(*) FROM message m WHERE m.session_id = s.id) AS msgs
+              FROM session s
+              JOIN project p ON p.id = s.project_id
+              WHERE p.worktree = $projectPath
+                AND s.parent_id IS NULL
+              ORDER BY s.time_updated DESC
+              LIMIT $limit
+            `,
+            { $projectPath: args.projectPath, $limit: limit },
+          );
         } else {
-          query = `
-            SELECT
-              s.id,
-              COALESCE(s.title, 'untitled') AS title,
-              COALESCE(p.name, CASE WHEN p.worktree = '/' THEN '(global)' ELSE REPLACE(p.worktree, RTRIM(p.worktree, REPLACE(p.worktree, '/', '')), '') END) AS project,
-              datetime(s.time_updated/1000, 'unixepoch', 'localtime') AS updated,
-              (SELECT COUNT(*) FROM message m WHERE m.session_id = s.id) AS msgs
-            FROM session s
-            LEFT JOIN project p ON p.id = s.project_id
-            WHERE s.parent_id IS NULL
-            ORDER BY s.time_updated DESC
-            LIMIT ${limit}
-          `;
+          rows = runQuery<SessionRow>(
+            `
+              SELECT
+                s.id,
+                COALESCE(s.title, 'untitled') AS title,
+                COALESCE(p.name, CASE WHEN p.worktree = '/' THEN '(global)' ELSE REPLACE(p.worktree, RTRIM(p.worktree, REPLACE(p.worktree, '/', '')), '') END) AS project,
+                datetime(s.time_updated/1000, 'unixepoch', 'localtime') AS updated,
+                (SELECT COUNT(*) FROM message m WHERE m.session_id = s.id) AS msgs
+              FROM session s
+              LEFT JOIN project p ON p.id = s.project_id
+              WHERE s.parent_id IS NULL
+              ORDER BY s.time_updated DESC
+              LIMIT $limit
+            `,
+            { $limit: limit },
+          );
         }
 
-        const rows = await runQuery(DB_URI, query);
         if (!rows || rows.length === 0) {
           return "No sessions found.";
         }
@@ -221,20 +232,28 @@ export const createTools = (
       const limit = args.limit ?? 50;
 
       try {
-        const query = `
-          SELECT
-            json_extract(m.data, '$.role') AS role,
-            datetime(m.time_created/1000, 'unixepoch', 'localtime') AS time,
-            GROUP_CONCAT(json_extract(p.data, '$.text'), char(10)) AS text
-          FROM message m
-          LEFT JOIN part p ON p.message_id = m.id
-            AND json_extract(p.data, '$.type') = 'text'
-          WHERE m.session_id = '${args.sessionId.replace(/'/g, "''")}'
-          GROUP BY m.id
-          ORDER BY m.time_created ASC
-          LIMIT ${limit}
-        `;
-        const rows = await runQuery(DB_URI, query);
+        type MessageRow = {
+          role: string;
+          time: string;
+          text: string;
+        };
+
+        const rows = runQuery<MessageRow>(
+          `
+            SELECT
+              json_extract(m.data, '$.role') AS role,
+              datetime(m.time_created/1000, 'unixepoch', 'localtime') AS time,
+              GROUP_CONCAT(json_extract(p.data, '$.text'), char(10)) AS text
+            FROM message m
+            LEFT JOIN part p ON p.message_id = m.id
+              AND json_extract(p.data, '$.type') = 'text'
+            WHERE m.session_id = $sessionId
+            GROUP BY m.id
+            ORDER BY m.time_created ASC
+            LIMIT $limit
+          `,
+          { $sessionId: args.sessionId, $limit: limit },
+        );
         if (!rows || rows.length === 0) {
           return `No messages found for session ${args.sessionId}.`;
         }
@@ -256,11 +275,7 @@ export const createTools = (
       const limit = args.limit ?? 10;
 
       try {
-        const results = await searchConversations(DB_URI, args.query, limit);
-        if (!results || results.length === 0) {
-          return `No results found for "${args.query}".`;
-        }
-        return results;
+        return searchConversations(args.query, limit);
       } catch (err) {
         return `Search failed: ${err instanceof Error ? err.message : String(err)}`;
       }
@@ -270,10 +285,7 @@ export const createTools = (
   memory_plans: tool({
     description: "List saved plan files from OpenCode's plans directory.",
     args: {
-      read: z
-        .string()
-        .optional()
-        .describe("Filename of a specific plan to read (without path)."),
+      read: z.string().optional().describe("Filename of a specific plan to read (without path)."),
     },
     async execute(args) {
       const plansDir = `${DATA_ROOT}/plans`;

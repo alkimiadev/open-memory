@@ -6,7 +6,7 @@ export const formatSessionList = (rows: Record<string, unknown>[]): string => {
   lines.push("|----|-------|---------|----------|");
 
   for (const row of rows) {
-    const id = String(row.id ?? "").slice(0, 12) + "...";
+    const id = `${String(row.id ?? "").slice(0, 12)}...`;
     const title = String(row.title ?? "untitled").slice(0, 40);
     const updated = String(row.updated ?? "");
     const msgs = String(row.msgs ?? "0");

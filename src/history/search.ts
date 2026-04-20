@@ -1,12 +1,14 @@
 import { runQuery } from "./queries.js";
 
-export const searchConversations = async (
-  dbUri: string,
-  searchTerm: string,
-  limit: number,
-): Promise<string> => {
-  const escaped = searchTerm.replace(/'/g, "''");
+type SearchResult = {
+  session_id: string;
+  title: string;
+  role: string;
+  time: string;
+  snippet: string;
+};
 
+export const searchConversations = (searchTerm: string, limit: number): string => {
   const query = `
     SELECT
       s.id AS session_id,
@@ -19,13 +21,16 @@ export const searchConversations = async (
     JOIN session s ON s.id = m.session_id
     WHERE s.parent_id IS NULL
       AND json_extract(p.data, '$.type') = 'text'
-      AND json_extract(p.data, '$.text') LIKE '%${escaped}%'
+      AND json_extract(p.data, '$.text') LIKE $searchPattern
     ORDER BY m.time_created DESC
-    LIMIT ${limit}
+    LIMIT $limit
   `;
 
   try {
-    const rows = await runQuery(dbUri, query);
+    const rows = runQuery<SearchResult>(query, {
+      $searchPattern: `%${searchTerm}%`,
+      $limit: limit,
+    });
     if (!rows || rows.length === 0) {
       return `No results found for "${searchTerm}".`;
     }

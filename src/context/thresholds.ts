@@ -1,3 +1,5 @@
+export type ContextStatus = "green" | "yellow" | "red" | "critical";
+
 export const THRESHOLDS = {
   yellow: 70,
   red: 85,
@@ -10,5 +12,3 @@ export const getStatusLabel = (percentage: number): ContextStatus => {
   if (percentage >= THRESHOLDS.yellow) return "yellow";
   return "green";
 };
-
-export type ContextStatus = "green" | "yellow" | "red" | "critical";

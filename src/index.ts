@@ -1,7 +1,7 @@
-import type { Plugin, PluginInput } from "@opencode-ai/plugin";
-import { createTools } from "./tools.js";
-import { startContextTracker } from "./context/tracker.js";
+import type { Plugin } from "@opencode-ai/plugin";
 import { getCompactionPrompt } from "./compaction/prompt.js";
+import { startContextTracker } from "./context/tracker.js";
+import { createTools } from "./tools.js";
 
 const OpenMemoryPlugin: Plugin = async (ctx) => {
   const contextTracker = startContextTracker(ctx);

@@ -1,11 +1,12 @@
-import type { Event } from "@opencode-ai/sdk";
 import type { PluginInput } from "@opencode-ai/plugin";
+import type { Event } from "@opencode-ai/sdk";
+import { type ContextStatus, THRESHOLDS } from "./thresholds.js";
 
 export type ContextInfo = {
   usedTokens: number;
   limitTokens: number;
   percentage: number;
-  status: "green" | "yellow" | "red" | "critical";
+  status: ContextStatus;
   model: string;
   providerID: string;
   modelID: string;
@@ -20,12 +21,6 @@ type SessionContextData = {
   lastUpdateTime: number;
   previousInputTokens: number[];
 };
-
-const THRESHOLDS = {
-  yellow: 0.70,
-  red: 0.85,
-  critical: 0.92,
-} as const;
 
 const DEFAULT_CONTEXT_LIMIT = 200_000;
 
@@ -88,10 +83,10 @@ export class ContextTracker {
         : inputTokens +
           (typeof tokens.output === "number" ? tokens.output : 0) +
           (typeof (tokens.cache as Record<string, unknown>)?.read === "number"
-            ? (tokens.cache as Record<string, unknown>).read as number
+            ? ((tokens.cache as Record<string, unknown>).read as number)
             : 0) +
           (typeof (tokens.cache as Record<string, unknown>)?.write === "number"
-            ? (tokens.cache as Record<string, unknown>).write as number
+            ? ((tokens.cache as Record<string, unknown>).write as number)
             : 0);
 
     const infoModel =
@@ -131,16 +126,15 @@ export class ContextTracker {
     if (!data || data.lastInputTokens === 0) return null;
 
     const modelKey = `${data.providerID}/${data.modelID}`;
-    const limitTokens =
-      this.modelContextLimits.get(modelKey) ?? DEFAULT_CONTEXT_LIMIT;
+    const limitTokens = this.modelContextLimits.get(modelKey) ?? DEFAULT_CONTEXT_LIMIT;
 
     const percentage = Math.round((data.lastInputTokens / limitTokens) * 100);
-    const status =
-      percentage >= THRESHOLDS.critical * 100
+    const status: ContextStatus =
+      percentage >= THRESHOLDS.critical
         ? "critical"
-        : percentage >= THRESHOLDS.red * 100
+        : percentage >= THRESHOLDS.red
           ? "red"
-          : percentage >= THRESHOLDS.yellow * 100
+          : percentage >= THRESHOLDS.yellow
             ? "yellow"
             : "green";
 

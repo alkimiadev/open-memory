@@ -1,5 +1,7 @@
 # Open Memory: Architecture & Research
 
+> **Note**: `AGENTS.md` is the canonical operational reference for this project. This document provides deeper context on the research and design decisions.
+
 ## Overview
 
 `@alkdev/open-memory` is a standalone OpenCode plugin providing three capabilities:
@@ -74,7 +76,7 @@ The core problem: OpenCode's automatic compaction fires at ~92% context usage wi
 
 #### 3. Session History Browser
 
-All backed by read-only `sqlite3` queries to `${XDG_DATA_HOME:-$HOME/.local/share}/opencode/opencode.db`.
+All backed by read-only `bun:sqlite` queries to `${XDG_DATA_HOME:-$HOME/.local/share}/opencode/opencode.db`.
 
 **Tools:**
 
@@ -83,14 +85,14 @@ All backed by read-only `sqlite3` queries to `${XDG_DATA_HOME:-$HOME/.local/shar
 | `memory_summary` | Quick counts: projects, sessions, messages, todos |
 | `memory_sessions` | List recent sessions with metadata, sorted by update time |
 | `memory_messages` | Read messages from a specific session as markdown |
-| `memory_search` | Full-text search across all conversations |
+| `memory_search` | Full-text search across all conversations (LIKE-based) |
 | `memory_plans` | List and read saved plans |
 
 **Rendering:**
 - Markdown tables for session lists
 - Formatted conversation transcripts for `memory_messages`
 - Snippet + session reference for search results
-- All queries use `LIMIT` and `LIKE` to avoid dumping entire DB
+- All queries use `LIMIT` and parameterized `db.prepare().all(params)`
 
 ## Component Design
 
@@ -103,7 +105,7 @@ src/
 │   ├── thresholds.ts     # Context percentage thresholds & status
 │   └── notify.ts         # System prompt injection for warnings
 ├── history/
-│   ├── queries.ts        # SQLite query helpers
+│   ├── queries.ts        # bun:sqlite read-only query helper
 │   ├── format.ts         # Markdown rendering utilities
 │   └── search.ts         # Full-text search logic
 └── compaction/

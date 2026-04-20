@@ -1,6 +1,6 @@
 export const formatAnomalyNotification = (
   sessionID: string,
-  type: string,
+  _type: string,
   percentage: number,
   status: string,
 ): string => {

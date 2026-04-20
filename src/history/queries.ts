@@ -1,22 +1,49 @@
-export const runQuery = async (dbUri: string, sql: string): Promise<Record<string, unknown>[]> => {
-  const proc = Bun.spawn(["sqlite3", "-json", dbUri, sql], {
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+import { Database } from "bun:sqlite";
 
-  const exitCode = await proc.exited;
-  const stdout = await new Response(proc.stdout).text();
-  const stderr = await new Response(proc.stderr).text();
+const getDbPath = (): string => {
+  const dataRoot = process.env.XDG_DATA_HOME || `${process.env.HOME}/.local/share/opencode`;
+  return `${dataRoot}/opencode.db`;
+};
 
-  if (exitCode !== 0) {
-    throw new Error(`sqlite3 exited with code ${exitCode}: ${stderr}`);
+let _db: Database | null = null;
+let _dbPath: string | null = null;
+
+const getDb = (): Database => {
+  const dbPath = getDbPath();
+  if (!_db || _dbPath !== dbPath) {
+    if (_db) {
+      try {
+        _db.close(true);
+      } catch {
+        // ignore
+      }
+    }
+    _db = new Database(dbPath, { readonly: true, create: false });
+    _dbPath = dbPath;
   }
+  return _db;
+};
 
-  if (!stdout.trim()) return [];
+export const runQuery = <T = Record<string, unknown>>(
+  sql: string,
+  params?: Record<string, string | number | null>,
+): T[] => {
+  const db = getDb();
+  const stmt = db.prepare(sql);
+  if (params) {
+    return stmt.all(params) as T[];
+  }
+  return stmt.all() as T[];
+};
 
-  try {
-    return JSON.parse(stdout) as Record<string, unknown>[];
-  } catch {
-    throw new Error(`Failed to parse sqlite3 output: ${stdout.slice(0, 200)}`);
+export const closeDb = (): void => {
+  if (_db) {
+    try {
+      _db.close(true);
+    } catch {
+      // ignore close errors
+    }
+    _db = null;
+    _dbPath = null;
   }
 };

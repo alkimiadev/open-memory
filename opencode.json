@@ -1,0 +1,4 @@
+{
+  "plugin": ["@alkdev/open-memory"],
+  "$schema": "https://opencode.ai/config.json"
+}

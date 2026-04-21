@@ -59,12 +59,13 @@ src/
 | `experimental.chat.system.transform` | Inject context % used + advisory into system prompt |
 | `event` | Feed SSE events to ContextTracker |
 
-### Tools (7)
+### Tools (8)
 
 | Tool | Purpose |
 |------|---------|
 | `memory_context` | Current context window usage (% , tokens, model, status) |
 | `memory_compact` | Trigger compaction via `ctx.client.session.summarize()` |
+| `memory_compactions` | List/read compaction checkpoints (summaries) for a session |
 | `memory_summary` | Quick counts: projects, sessions, messages, todos |
 | `memory_sessions` | List recent sessions, optionally filtered by project path |
 | `memory_messages` | Read messages from a specific session |
@@ -98,6 +99,15 @@ usable = model.limit.input ? model.limit.input - reserved
 ```
 
 The `tokens.input` on the last assistant message approximates context size. We track against model context limit from config, falling back to 200k.
+
+### Compaction Data in DB
+
+When compaction occurs, OpenCode creates:
+1. A synthetic `user` message with a `compaction`-type part (`part.data = {type: "compaction", auto: true/false, overflow: true/false}`)
+2. `message.data.summary = {diffs: [...]}` on the compaction message
+3. The assistant message immediately after contains the actual summary text in a `text`-type part
+
+The `memory_compactions` tool queries for `compaction`-type parts and retrieves the adjacent summary text, presenting them as navigable checkpoints.
 
 ### Write Operations
 

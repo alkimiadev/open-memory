@@ -282,6 +282,122 @@ export const createTools = (
     },
   }),
 
+  memory_compactions: tool({
+    description:
+      "List compaction events (checkpoints) for a session. Compactions are moments where the conversation was summarized to free context space. Use 'read' to get the full summary text of a specific compaction — these act as checkpoints showing what the agent considered important at that point in the session.",
+    args: {
+      sessionId: z.string().describe("Session ID to check compactions for."),
+      read: z
+        .number()
+        .optional()
+        .describe("Index (1-based) of a specific compaction to read the full summary text for."),
+    },
+    async execute(args) {
+      try {
+        type CompactionMeta = {
+          compaction_msg_id: string;
+          compaction_time: number;
+          time: string;
+          is_auto: number;
+          overflow: number;
+        };
+
+        type SummaryRow = {
+          summary_text: string;
+        };
+
+        const compactions = runQuery<CompactionMeta>(
+          `
+            SELECT
+              cp_msg.id AS compaction_msg_id,
+              cp_msg.time_created AS compaction_time,
+              datetime(cp_msg.time_created/1000, 'unixepoch', 'localtime') AS time,
+              COALESCE(json_extract(cp_part.data, '$.auto'), 0) AS is_auto,
+              COALESCE(json_extract(cp_part.data, '$.overflow'), 0) AS overflow
+            FROM part cp_part
+            JOIN message cp_msg ON cp_msg.id = cp_part.message_id
+            WHERE cp_msg.session_id = $sessionId
+              AND json_extract(cp_part.data, '$.type') = 'compaction'
+            ORDER BY cp_msg.time_created ASC
+          `,
+          { $sessionId: args.sessionId },
+        );
+
+        if (!compactions || compactions.length === 0) {
+          return "No compactions found for this session.";
+        }
+
+        if (args.read !== undefined) {
+          const idx = args.read - 1;
+          if (idx < 0 || idx >= compactions.length) {
+            return `Invalid compaction index. Session has ${compactions.length} compaction(s). Use 1-${compactions.length}.`;
+          }
+          const comp = compactions[idx];
+          const summaryRows = runQuery<SummaryRow>(
+            `
+              SELECT json_extract(p.data, '$.text') AS summary_text
+              FROM message m
+              JOIN part p ON p.message_id = m.id
+              WHERE m.session_id = $sessionId
+                AND json_extract(m.data, '$.role') = 'assistant'
+                AND json_extract(p.data, '$.type') = 'text'
+                AND m.time_created > $compactionTime
+              ORDER BY m.time_created ASC
+              LIMIT 1
+            `,
+            { $sessionId: args.sessionId, $compactionTime: comp.compaction_time },
+          );
+          const summaryText =
+            summaryRows && summaryRows.length > 0 && summaryRows[0].summary_text
+              ? summaryRows[0].summary_text
+              : "(no summary text found)";
+          const header = [
+            `# Compaction ${args.read}`,
+            `Time: ${comp.time}`,
+            `Auto: ${comp.is_auto ? "yes" : "no"}`,
+            `Overflow: ${comp.overflow ? "yes" : "no"}`,
+            "",
+          ].join("\n");
+          return `${header}${summaryText}`;
+        }
+
+        const lines = [`# Compactions (${compactions.length})\n`];
+        lines.push("| # | Time | Auto | Summary |");
+        lines.push("|---|------|------|---------|");
+
+        for (let i = 0; i < compactions.length; i++) {
+          const comp = compactions[i];
+          const summaryRows = runQuery<SummaryRow>(
+            `
+              SELECT substr(json_extract(p.data, '$.text'), 1, 150) AS summary_text
+              FROM message m
+              JOIN part p ON p.message_id = m.id
+              WHERE m.session_id = $sessionId
+                AND json_extract(m.data, '$.role') = 'assistant'
+                AND json_extract(p.data, '$.type') = 'text'
+                AND m.time_created > $compactionTime
+              ORDER BY m.time_created ASC
+              LIMIT 1
+            `,
+            { $sessionId: args.sessionId, $compactionTime: comp.compaction_time },
+          );
+          const preview = summaryRows?.[0]?.summary_text
+            ? `${summaryRows[0].summary_text.replace(/\n/g, " ").substring(0, 60)}...`
+            : "(no summary)";
+          lines.push(`| ${i + 1} | ${comp.time} | ${comp.is_auto ? "yes" : "no"} | ${preview} |`);
+        }
+
+        lines.push(
+          "",
+          `Use memory_compactions with a "read" argument (1-${compactions.length}) to view the full summary for a specific compaction.`,
+        );
+        return lines.join("\n");
+      } catch (err) {
+        return `Failed to query compactions: ${err instanceof Error ? err.message : String(err)}`;
+      }
+    },
+  }),
+
   memory_plans: tool({
     description: "List saved plan files from OpenCode's plans directory.",
     args: {

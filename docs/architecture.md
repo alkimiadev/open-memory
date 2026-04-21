@@ -82,6 +82,7 @@ All backed by read-only `bun:sqlite` queries to `${XDG_DATA_HOME:-$HOME/.local/s
 
 | Tool | Purpose |
 |------|---------|
+| `memory_compactions` | List/read compaction checkpoints for a session |
 | `memory_summary` | Quick counts: projects, sessions, messages, todos |
 | `memory_sessions` | List recent sessions with metadata, sorted by update time |
 | `memory_messages` | Read messages from a specific session as markdown |

@@ -59,18 +59,27 @@ src/
 | `experimental.chat.system.transform` | Inject context % used + advisory into system prompt |
 | `event` | Feed SSE events to ContextTracker |
 
-### Tools (8)
+### Tools (2)
 
 | Tool | Purpose |
 |------|---------|
-| `memory_context` | Current context window usage (% , tokens, model, status) |
-| `memory_compact` | Trigger compaction via `ctx.client.session.summarize()` |
-| `memory_compactions` | List/read compaction checkpoints (summaries) for a session |
-| `memory_summary` | Quick counts: projects, sessions, messages, todos |
-| `memory_sessions` | List recent sessions, optionally filtered by project path |
-| `memory_messages` | Read messages from a specific session |
-| `memory_search` | Text search across all conversations (LIKE-based) |
-| `memory_plans` | List/read saved plan files |
+| `memory` | Router for all read-only operations: summary, sessions, messages, search, compactions, context, plans, help. Call with `{tool: "help"}` to see available operations. |
+| `memory_compact` | Trigger compaction via `ctx.client.session.summarize()` — kept separate because it's a mutation |
+
+The `memory` tool dispatches to internal handlers by `tool` name, keeping the agent's visible tool count low (2 instead of 8) to minimize context bloat.
+
+**Internal operations** (accessed via `memory({tool: "...", args: {...}})`):
+
+| Operation | Purpose | Key args |
+|-----------|---------|----------|
+| help | Show available operations, or details for a specific one | tool (optional) |
+| summary | Quick counts: projects, sessions, messages, todos | — |
+| sessions | List recent sessions, optionally filtered by project | limit, projectPath |
+| messages | Read messages from a specific session | sessionId, limit |
+| search | Text search across all conversations (LIKE-based) | query, limit |
+| compactions | List/read compaction checkpoints for a session | sessionId, read |
+| context | Current context window usage (% , tokens, model, status) | — |
+| plans | List or read saved plan files | read (filename) |
 
 ### Database Access
 

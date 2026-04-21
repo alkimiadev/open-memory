@@ -31,86 +31,104 @@ The core problem: OpenCode's automatic compaction fires at ~92% context usage wi
 
 ## Architecture
 
+### Tool Design: Router Pattern
+
+The plugin exposes exactly 2 tools to the agent:
+
+| Tool | Type | Purpose |
+|------|------|---------|
+| `memory` | Read-only router | Dispatches to 8 internal operations by `{tool: "name", args: {...}}` |
+| `memory_compact` | Mutation | Triggers compaction via `ctx.client.session.summarize()` |
+
+**Why a router?** OpenCode has ~13.5k token baseline context bloat with just "hello world". Each tool definition adds its JSON schema to the system prompt. 8 separate tools = 8 schemas consuming context. By collapsing into a router, the agent sees only 2 tool definitions instead of 8, dramatically reducing context overhead.
+
+This pattern is inspired by toolEnv's `/call` registry approach and is applicable to other plugins that expose many operations.
+
 ### Three Pillars
 
 #### 1. Context Awareness
 
-**SSE-based token tracking** (same pattern as `open-coordinator`'s detection system):
+**SSE-based token tracking:**
 
-- Subscribe to `ctx.client.global.event()` SSE stream
-- Track `tokens.input` from `message.updated` events per session
+- Subscribe to `message.updated` events via the `event` plugin hook
+- Track `tokens.input` from assistant messages per session
 - The `tokens.input` on the latest assistant message = current context size
 - Compare against model's `limit.context` to compute percentage used
-- Model limits available from `ctx.client.config.get()` or provider info
+- Model limits available from `ctx.client.config.get()`
 
-**Thresholds:**
+**Thresholds** (defined in `src/context/thresholds.ts` as the single source of truth):
 - **Green** (<70%): Healthy, no action needed
 - **Yellow** (70-85%): Consider compacting at next break point
 - **Red** (85-92%): Strongly recommend compacting now
 - **Critical** (>92%): Imminent automatic compaction
 
 **Proactive notification:**
-- Use `experimental.chat.system.transform` hook to inject context percentage into system prompt
+- `experimental.chat.system.transform` hook injects context percentage into system prompt
 - Agent always knows its context status without calling a tool
-- At yellow/red thresholds, inject an explicit advisory note
-
-**Tool: `memory_context`**
-- Returns current token usage, model context limit, percentage, and status
-- Includes trend (growing fast vs. stable)
-- Lists model info
+- At yellow/red thresholds, injects an explicit advisory note
 
 #### 2. Compaction Management
 
 **`memory_compact` tool:**
 - Calls `ctx.client.session.summarize()` to trigger compaction on the current session
-- Requires `providerID` and `modelID` — obtained from the session's last user message or config
+- Requires `providerID` and `modelID` — obtained from the session's last user message or context tracker
+- **Must NOT await `summarize()`** — returns immediately, schedules via `setTimeout(0)` because compaction can't start until the tool returns control to the event loop
+- Refuses to compact if context is below 50% (wastes a compaction cycle)
 - This gives the agent explicit control over *when* compaction happens
 
 **`experimental.session.compacting` hook:**
 - Replaces the default "summarize for another agent" prompt
 - Better prompt emphasizes self-continuity, preserving task context, decisions, and next steps
-
-**Default instructions in system prompt:**
-- "When context exceeds 85%, use `memory_compact` at your next natural break point"
-- "At 90%+, compact immediately if possible"
+- Uses structured template: Goal, Instructions, Discoveries, Accomplished, Relevant files, Notes
 
 #### 3. Session History Browser
 
 All backed by read-only `bun:sqlite` queries to `${XDG_DATA_HOME:-$HOME/.local/share}/opencode/opencode.db`.
 
-**Tools:**
+**Operations** (all accessed via the `memory` router):
 
-| Tool | Purpose |
-|------|---------|
-| `memory_compactions` | List/read compaction checkpoints for a session |
-| `memory_summary` | Quick counts: projects, sessions, messages, todos |
-| `memory_sessions` | List recent sessions with metadata, sorted by update time |
-| `memory_messages` | Read messages from a specific session as markdown |
-| `memory_search` | Full-text search across all conversations (LIKE-based) |
-| `memory_plans` | List and read saved plans |
+| Operation | Purpose | Key args |
+|-----------|---------|----------|
+| help | Show available operations | tool (optional, for details on one) |
+| summary | Quick counts: projects, sessions, messages, todos | — |
+| sessions | List recent sessions with metadata | limit, projectPath |
+| messages | Read messages from a session as markdown | sessionId, limit |
+| search | Text search across all conversations (LIKE-based) | query, limit |
+| compactions | List/read compaction checkpoints for a session | sessionId, read (1-based index) |
+| context | Current context window usage | — |
+| plans | List and read saved plans | read (filename) |
 
 **Rendering:**
 - Markdown tables for session lists
-- Formatted conversation transcripts for `memory_messages`
+- Formatted conversation transcripts for `messages`
 - Snippet + session reference for search results
+- Compaction checkpoints as navigable indices with summary previews
 - All queries use `LIMIT` and parameterized `db.prepare().all(params)`
+
+### Compaction Data in DB
+
+When compaction occurs, OpenCode creates:
+1. A synthetic `user` message with a `compaction`-type part (`part.data = {type: "compaction", auto: true/false, overflow: true/false}`)
+2. `message.data.summary = {diffs: [...]}` on the compaction message
+3. The assistant message immediately after contains the actual summary text in a `text`-type part
+
+The `compactions` operation queries for `compaction`-type parts and retrieves the adjacent summary text, presenting them as navigable checkpoints. This is a stepping stone toward agents having their own UI with HUD + last N messages + tools for long-term memories.
 
 ## Component Design
 
 ```
 src/
 ├── index.ts              # Plugin entry: hooks + tool registration
-├── tools.ts              # Tool definitions (memory_*)
+├── tools.ts              # 2 tools: memory router + memory_compact (with setTimeout fix)
 ├── context/
-│   ├── tracker.ts        # SSE token tracking (per-session)
-│   ├── thresholds.ts     # Context percentage thresholds & status
-│   └── notify.ts         # System prompt injection for warnings
+│   ├── tracker.ts        # SSE token tracking (per-session context usage)
+│   └── thresholds.ts     # Threshold constants + ContextStatus type (single source of truth)
 ├── history/
-│   ├── queries.ts        # bun:sqlite read-only query helper
-│   ├── format.ts         # Markdown rendering utilities
-│   └── search.ts         # Full-text search logic
+│   ├── queries.ts        # bun:sqlite read-only query helper (lazy singleton)
+│   ├── format.ts         # Markdown rendering for session/message output
+│   └── search.ts         # LIKE-based full-text search across conversations
 └── compaction/
-    └── prompt.ts         # Better compaction prompt template
+    └── prompt.ts         # Compaction prompt template (self-continuity, not "for another agent")
 ```
 
 ## Key Technical Details
@@ -119,16 +137,13 @@ src/
 
 From `overflow.ts` in OpenCode source:
 ```typescript
-// The actual check is:
-// count >= usable
-// where:
-//   count = tokens.total || (input + output + cache.read + cache.write)
-//   reserved = config.compaction?.reserved ?? min(20000, maxOutputTokens)
-//   usable = model.limit.input ? model.limit.input - reserved
-//                           : model.limit.context - maxOutputTokens
+count = tokens.total || (input + output + cache.read + cache.write)
+reserved = config.compaction?.reserved ?? min(20000, maxOutputTokens)
+usable = model.limit.input ? model.limit.input - reserved
+                        : model.limit.context - maxOutputTokens
 ```
 
-The `tokens.input` field on the last assistant message represents the context size at the time that message was sent. We track this and compare it against the model's context limit (from config/providers).
+The `tokens.input` field on the last assistant message represents the context size at the time that message was sent. We track this and compare it against the model's context limit (from config/providers), falling back to 200k.
 
 ### Session Summarize API
 
@@ -140,27 +155,31 @@ ctx.client.session.summarize({
 })
 ```
 
-This triggers the compaction flow in OpenCode's server.
+This triggers the compaction flow in OpenCode's server. **Must not be awaited** — see the `memory_compact` deadlock note above.
 
-### Plugin Hook: `experimental.session.compacting`
+### Plugin Hooks
 
+**`experimental.session.compacting`:**
 ```typescript
-"experimental.session.compacting": async (input, output) => {
-  // output.context: string[] — appended to default prompt
-  // output.prompt?: string — replaces default prompt entirely
-  output.prompt = `You are compacting your own session...`;
+async (input, output) => {
+  output.prompt = getCompactionPrompt(); // replaces default entirely
 }
 ```
 
-### Plugin Hook: `experimental.chat.system.transform`
-
+**`experimental.chat.system.transform`:**
 ```typescript
-"experimental.chat.system.transform": async (input, output) => {
-  // Can append strings to the system prompt
-  const contextInfo = getContextInfo(input.sessionID);
-  if (contextInfo) {
-    output.system.push(`Context: ${contextInfo.percentage}% used (${contextInfo.status})`);
+async (input, output) => {
+  const info = contextTracker.getContextInfo(input.sessionID);
+  if (info) {
+    output.system.push(`🟢 Context: ${info.percentage}% used (...)`);
   }
+}
+```
+
+**`event`:**
+```typescript
+async ({ event }) => {
+  contextTracker.handleEvent(event);
 }
 ```
 
@@ -170,39 +189,23 @@ This triggers the compaction flow in OpenCode's server.
 - **Open-memory** handles session introspection, context awareness, history browsing
 - Both use SSE event streams but for different purposes
 - Both can be used together — coordinator for multi-session workflows, memory for context management
-- The `experimental.session.compacting` hook in coordinator has a good prompt already; open-memory will provide an enhanced version that includes task context awareness
+- Both implement `experimental.session.compacting` — open-memory's version is more detailed
+- The router pattern (2 tools instead of many) was first applied here and can be applied to open-coordinator
 
-## References
+## Future Work
 
-- OpenCode source: `/workspace/opencode` — especially `packages/opencode/src/session/compaction.ts`, `overflow.ts`, `status.ts`
-- OpenCode plugin SDK: `/workspace/opencode/packages/plugin/src/index.ts`
-- OpenCode plugin types: see `Hooks` interface for all available hooks
-- Open-code coordinator plugin: `/workspace/@alkimiadev/open-coordinator` — architecture pattern reference
-- Original memory browsing skill: `docs/research/opencode-memory/opencode-memory.md`
-- OpenCode DB schema: `message`, `part`, `session`, `project`, `todo` tables
-- OpenCode config schema: `compaction.auto`, `compaction.prune`, `compaction.reserved` fields
-
-## Implementation Phases
-
-### Phase 1: Foundation (current)
-- Plugin scaffolding, build setup, basic hooks
-- `experimental.session.compacting` hook with better default prompt
-- Basic `memory_context` tool (context percentage calculation)
-
-### Phase 2: History Browser
-- `memory_summary`, `memory_sessions`, `memory_messages`
-- `memory_search` with full-text search
-- `memory_plans` for plan access
-- Markdown formatting for all outputs
-
-### Phase 3: Context Awareness
-- SSE-based token tracker
-- Proactive context warnings via `experimental.chat.system.transform`
-- `memory_compact` tool calling `session.summarize`
-- Default system instructions on when to compact
-
-### Phase 4: Polish
-- Configurable thresholds
+- FTS5 virtual table support for better search (stemming, ranking)
+- Configurable thresholds via plugin config
 - Session comparison tools
 - Export/import helpers
 - Integration tests
+
+## References
+
+- OpenCode source: `/workspace/opencode` — especially `packages/opencode/src/session/compaction.ts`, `overflow.ts`
+- OpenCode plugin SDK: `/workspace/opencode/packages/plugin/src/index.ts`
+- OpenCode plugin types: see `Hooks` interface for all available hooks
+- Open-coordinator plugin: `/workspace/@alkimiadev/open-coordinator` — architecture pattern reference
+- OpenCode DB schema: `message`, `part`, `session`, `project`, `todo` tables
+- OpenCode config schema: `compaction.auto`, `compaction.prune`, `compaction.reserved` fields
+- Bun SQLite docs: https://bun.com/docs/runtime/sqlite

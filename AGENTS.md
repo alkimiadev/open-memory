@@ -38,13 +38,12 @@ bun run test         # bun test
 ```
 src/
 ├── index.ts              # Plugin entry: hooks + tool registration
-├── tools.ts              # Tool definitions (memory_*)
+├── tools.ts              # Tool definitions (memory router + memory_compact)
 ├── context/
 │   ├── tracker.ts        # SSE token tracking (per-session context usage)
-│   ├── thresholds.ts     # Threshold constants + ContextStatus type (single source of truth)
-│   └── notify.ts         # Context notification formatting
+│   └── thresholds.ts     # Threshold constants + ContextStatus type (single source of truth)
 ├── history/
-│   ├── queries.ts        # bun:sqlite read-only query helper (all DB access goes here)
+│   ├── queries.ts        # bun:sqlite read-only query helper (lazy singleton)
 │   ├── format.ts         # Markdown rendering for session/message output
 │   └── search.ts         # LIKE-based full-text search across conversations
 └── compaction/
@@ -77,7 +76,7 @@ The `memory` tool dispatches to internal handlers by `tool` name, keeping the ag
 | sessions | List recent sessions, optionally filtered by project | limit, projectPath |
 | messages | Read messages from a specific session | sessionId, limit |
 | search | Text search across all conversations (LIKE-based) | query, limit |
-| compactions | List/read compaction checkpoints for a session | sessionId, read |
+| compactions | List/read compaction checkpoints for a session | sessionId, read (1-based index) |
 | context | Current context window usage (% , tokens, model, status) | — |
 | plans | List or read saved plan files | read (filename) |
 
@@ -116,11 +115,13 @@ When compaction occurs, OpenCode creates:
 2. `message.data.summary = {diffs: [...]}` on the compaction message
 3. The assistant message immediately after contains the actual summary text in a `text`-type part
 
-The `memory_compactions` tool queries for `compaction`-type parts and retrieves the adjacent summary text, presenting them as navigable checkpoints.
+The `compactions` operation queries for `compaction`-type parts and retrieves the adjacent summary text, presenting them as navigable checkpoints.
 
 ### Write Operations
 
 All write operations (compaction triggering) go through the OpenCode client SDK (`ctx.client.session.summarize`). The plugin never writes to the database or any OpenCode files.
+
+**`memory_compact` must NOT await `ctx.client.session.summarize()`** — it returns immediately and schedules via `setTimeout(() => { ... }, 0)` because compaction cannot start until the tool returns control to the event loop.
 
 ## Key Conventions
 
@@ -140,25 +141,51 @@ All write operations (compaction triggering) go through the OpenCode client SDK 
 - Both implement `experimental.session.compacting` — open-memory's version is more detailed
 - Can be used together or independently
 
-## Implementation Phases
+## Recommended AGENTS.md Additions for Consumers
 
-### Phase 1: Foundation (current)
-- Plugin scaffolding, build, basic hooks
-- Compaction prompt, context tool, history tools
-- `bun:sqlite` read-only queries
+When using this plugin in an OpenCode project, consider adding these lines to your project's `AGENTS.md` so that agents know about and can effectively use the memory tools:
 
-### Phase 2: Context Awareness
-- SSE token tracker (implemented, needs field testing)
-- Proactive system prompt injection
-- `memory_compact` tool
+```markdown
+## Memory Tools (via @alkdev/open-memory plugin)
 
-### Phase 3: History Browser Enhancements
-- FTS5 virtual table support (if available)
-- Better search (stemming, ranking)
+You have access to two tools for managing your context and accessing session history:
+
+### memory({tool: "...", args: {...}})
+
+Read-only tool for introspecting your session history and context state. Available operations:
+- `memory({tool: "help"})` — full reference with examples
+- `memory({tool: "summary"})` — quick counts of projects, sessions, messages, todos
+- `memory({tool: "sessions"})` — list recent sessions (useful for finding past work)
+- `memory({tool: "messages", args: {sessionId: "..."}})` — read a session's conversation
+- `memory({tool: "search", args: {query: "..."}})` — search across all conversations
+- `memory({tool: "compactions", args: {sessionId: "..."}})` — view compaction checkpoints
+- `memory({tool: "context"})` — check your current context window usage
+
+### memory_compact()
+
+Trigger compaction on the current session. This summarizes the conversation so far to free context space.
+
+**When to use memory_compact:**
+- When context is above 80% (check with `memory({tool: "context"})`)
+- When you notice you're losing track of earlier conversation details
+- At natural breakpoints in multi-step tasks (after completing a subtask, before starting a new one)
+- When the system prompt shows a yellow/red/critical context warning
+- Proactively, rather than waiting for automatic compaction at 92%
+
+**When NOT to use memory_compact:**
+- When context is below 50% (it wastes a compaction cycle)
+- In the middle of a complex edit that you need immediate context for
+- When the task is nearly complete (just finish the task instead)
+
+Compaction preserves your most important context in a structured summary — you will continue the session with the summary as your starting point.
+```
+
+## Roadmap
+
+### Future improvements
+- FTS5 virtual table support for better search (stemming, ranking)
+- Configurable thresholds via plugin config
 - Session comparison tools
-
-### Phase 4: Polish
-- Configurable thresholds
 - Export/import helpers
 - Integration tests
 

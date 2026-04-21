@@ -51,7 +51,9 @@ export const searchConversations = (searchTerm: string, limit: number): string =
       lines.push("");
     }
 
-    lines.push("Use memory_messages with a session ID to read the full conversation.");
+    lines.push(
+      'Use memory({tool: "messages", args: {sessionId: "..."}}) to read the full conversation.',
+    );
     return lines.join("\n");
   } catch (err) {
     return `Search failed: ${err instanceof Error ? err.message : String(err)}`;

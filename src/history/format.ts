@@ -15,7 +15,9 @@ export const formatSessionList = (rows: Record<string, unknown>[]): string => {
   }
 
   lines.push("");
-  lines.push("Use memory_messages with a session ID to read the full conversation.");
+  lines.push(
+    'Use memory({tool: "messages", args: {sessionId: "..."}}) to read the full conversation.',
+  );
 
   return lines.join("\n");
 };

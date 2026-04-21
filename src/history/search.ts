@@ -15,7 +15,7 @@ export const searchConversations = (searchTerm: string, limit: number): string =
       COALESCE(s.title, 'untitled') AS title,
       json_extract(m.data, '$.role') AS role,
       datetime(m.time_created/1000, 'unixepoch', 'localtime') AS time,
-      substr(json_extract(p.data, '$.text'), 1, 300) AS snippet
+      substr(json_extract(p.data, '$.text'), 1, 500) AS snippet
     FROM part p
     JOIN message m ON m.id = p.message_id
     JOIN session s ON s.id = m.session_id
@@ -38,14 +38,14 @@ export const searchConversations = (searchTerm: string, limit: number): string =
     const lines: string[] = [`# Search: "${searchTerm}"\n`];
 
     for (const row of rows) {
-      const sessionId = String(row.session_id ?? "").slice(0, 16);
+      const sessionId = String(row.session_id ?? "");
       const title = String(row.title ?? "untitled");
       const time = String(row.time ?? "");
       const role = String(row.role ?? "unknown");
       const snippet = String(row.snippet ?? "");
 
       lines.push(`### ${title} (${time})`);
-      lines.push(`- Session: \`${sessionId}...\``);
+      lines.push(`- Session: \`${sessionId}\``);
       lines.push(`- Role: ${role}`);
       lines.push(`- Snippet: ${snippet}...`);
       lines.push("");

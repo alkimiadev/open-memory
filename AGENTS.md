@@ -74,11 +74,16 @@ The `memory` tool dispatches to internal handlers by `tool` name, keeping the ag
 | help | Show available operations, or details for a specific one | tool (optional) |
 | summary | Quick counts: projects, sessions, messages, todos | — |
 | sessions | List recent sessions, optionally filtered by project | limit, projectPath |
-| messages | Read messages from a specific session | sessionId, limit |
+| messages | Read messages from a session, with filtering options | sessionId, limit, role, showTools, maxLength |
+| message | Read a single message by ID (cleaner output, no tool-call noise) | messageId, maxLength |
 | search | Text search across all conversations (LIKE-based) | query, limit |
 | compactions | List/read compaction checkpoints for a session | sessionId, read (1-based index) |
 | context | Current context window usage (% , tokens, model, status) | — |
 | plans | List or read saved plan files | read (filename) |
+
+**`messages` operation** hides tool-call parts (Read, Write, Bash, etc.) by default for cleaner output. Set `showTools: true` to include them. Use `role` to filter to `"user"`, `"assistant"`, or `"system"`. Use `maxLength` to override the default 2000-char per-message limit.
+
+**`message` operation** retrieves a single message by its ID (`msg_...`). Default maxLength is 8000 (higher since it's a single message). Tool calls are hidden by default; set `showTools: true` to include them.
 
 ### Database Access
 
@@ -123,6 +128,41 @@ All write operations (compaction triggering) go through the OpenCode client SDK 
 
 **`memory_compact` must NOT await `ctx.client.session.summarize()`** — it returns immediately and schedules via `setTimeout(() => { ... }, 0)` because compaction cannot start until the tool returns control to the event loop.
 
+## Local Development & Testing
+
+OpenCode installs plugins from npm into `~/.cache/opencode/node_modules/`. When doing local development, you must symlink your local repo to that location, otherwise OpenCode will load the stale npm-published version even after you rebuild.
+
+### Setup (one-time)
+
+```bash
+# Remove the npm-installed copy and replace with a symlink
+rm -rf ~/.cache/opencode/node_modules/@alkdev/open-memory
+ln -s /workspace/@alkdev/open-memory ~/.cache/opencode/node_modules/@alkdev/open-memory
+```
+
+### Iteration loop
+
+```bash
+bun run build          # rebuild dist/index.js
+bun run typecheck      # verify types
+bun run lint           # verify style
+bun run test           # run tests
+```
+
+After rebuilding, restart OpenCode to pick up the new build. OpenCode loads plugins at startup and caches the ESM module in memory for the session.
+
+### Also clear Bun's global cache
+
+If you previously installed via `bun add`, Bun caches the package in `~/.bun/install/cache/`. After publishing a new version, clear it:
+
+```bash
+rm -rf ~/.bun/install/cache/@alkdev/open-memory*
+```
+
+### Without the symlink
+
+Without the symlink, `bun run build` will update `dist/index.js` in your repo, but OpenCode will still load from `~/.cache/opencode/node_modules/@alkdev/open-memory/dist/index.js` which is a separate copy from the npm registry. Rebuilding does NOT update that copy. This is the most common source of "my changes aren't showing up" during plugin development.
+
 ## Key Conventions
 
 - No comments unless requested
@@ -157,6 +197,9 @@ Read-only tool for introspecting your session history and context state. Availab
 - `memory({tool: "summary"})` — quick counts of projects, sessions, messages, todos
 - `memory({tool: "sessions"})` — list recent sessions (useful for finding past work)
 - `memory({tool: "messages", args: {sessionId: "..."}})` — read a session's conversation
+- `memory({tool: "messages", args: {sessionId: "...", role: "assistant"}})` — read only assistant messages
+- `memory({tool: "messages", args: {sessionId: "...", showTools: true}})` — include tool-call output
+- `memory({tool: "message", args: {messageId: "msg_..."}})` — read a single message by ID
 - `memory({tool: "search", args: {query: "..."}})` — search across all conversations
 - `memory({tool: "compactions", args: {sessionId: "..."}})` — view compaction checkpoints
 - `memory({tool: "context"})` — check your current context window usage

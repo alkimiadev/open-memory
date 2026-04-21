@@ -1,7 +1,7 @@
 import type { PluginInput, ToolDefinition } from "@opencode-ai/plugin";
 import { tool } from "@opencode-ai/plugin";
 import type { ContextTracker } from "./context/tracker.js";
-import { formatMessageList, formatSessionList } from "./history/format.js";
+import { formatMessageList, formatSessionList, formatSingleMessage } from "./history/format.js";
 import { runQuery } from "./history/queries.js";
 import { searchConversations } from "./history/search.js";
 
@@ -19,7 +19,8 @@ Call \`memory({tool: "<name>", args: {...}})\` to use one.
 |------|-------------|----------|
 | summary | Count of projects, sessions, messages, todos | — |
 | sessions | List recent sessions, optionally filtered by project | limit, projectPath |
-| messages | Read messages from a session as formatted conversation | sessionId, limit |
+| messages | Read messages from a session as formatted conversation | sessionId, limit, role, showTools, maxLength |
+| message | Read a single message by ID (cleaner output, no tool-call noise) | messageId, maxLength |
 | search | Text search across all conversations | query, limit |
 | compactions | List/read compaction checkpoints for a session | sessionId, read (1-based index) |
 | context | Current context window usage (% , tokens, status) | — |
@@ -29,6 +30,8 @@ Call \`memory({tool: "<name>", args: {...}})\` to use one.
 Examples:
 - \`memory({tool: "search", args: {query: "safetensors"}})\`
 - \`memory({tool: "compactions", args: {sessionId: "ses_abc", read: 1}})\`
+- \`memory({tool: "messages", args: {sessionId: "ses_abc", role: "assistant"}})\`
+- \`memory({tool: "message", args: {messageId: "msg_abc"}})\`
 - \`memory({tool: "help", args: {tool: "search"}})\``;
 
 const TOOL_HELP: Record<string, string> = {
@@ -36,7 +39,10 @@ const TOOL_HELP: Record<string, string> = {
   sessions: `**sessions** — List recent sessions with titles, update times, message counts.
 Args: limit (number, default 10), projectPath (string, optional filter by worktree path).`,
   messages: `**messages** — Read messages from a specific session as formatted conversation.
-Args: sessionId (string, required), limit (number, default 50).`,
+By default, tool-call parts (Read, Write, Bash, etc.) are hidden to reduce noise. Set showTools: true to include them.
+Args: sessionId (string, required), limit (number, default 50), role (string, optional filter: "user", "assistant", "system"), showTools (boolean, default false), maxLength (number, default 2000 per message).`,
+  message: `**message** — Read a single message by ID. Shows the message with tool calls hidden by default, formatted cleanly.
+Args: messageId (string, required), showTools (boolean, default false), maxLength (number, default 8000).`,
   search: `**search** — Text search across all conversations. Returns matching snippets with session references.
 Args: query (string, required), limit (number, default 10).`,
   compactions: `**compactions** — List compaction checkpoints for a session. Compactions are summaries created when context was freed. Use 'read' to get the full summary text — these act as checkpoints showing what was important at that point.
@@ -133,22 +139,71 @@ const handlers: Record<string, MemoryHandler> = {
   messages(args) {
     const sessionId = args.sessionId as string;
     const limit = (args.limit as number) ?? 50;
+    const roleFilter = args.role as string | undefined;
+    const showTools = (args.showTools as boolean) ?? false;
+    const maxLength = args.maxLength as number | undefined;
     if (!sessionId) return "sessionId is required.";
 
     try {
       type MessageRow = { role: string; time: string; text: string };
+      let rows: MessageRow[];
+
+      if (roleFilter) {
+        rows = runQuery<MessageRow>(
+          `SELECT json_extract(m.data, '$.role') AS role,
+                  datetime(m.time_created/1000, 'unixepoch', 'localtime') AS time,
+                  GROUP_CONCAT(json_extract(p.data, '$.text'), char(10)) AS text
+           FROM message m LEFT JOIN part p ON p.message_id = m.id ${showTools ? "" : "AND json_extract(p.data, '$.type') = 'text'"}
+           WHERE m.session_id = $sessionId AND json_extract(m.data, '$.role') = $role
+           GROUP BY m.id ORDER BY m.time_created ASC LIMIT $limit`,
+          { $sessionId: sessionId, $role: roleFilter, $limit: limit },
+        );
+      } else {
+        rows = runQuery<MessageRow>(
+          `SELECT json_extract(m.data, '$.role') AS role,
+                  datetime(m.time_created/1000, 'unixepoch', 'localtime') AS time,
+                  GROUP_CONCAT(json_extract(p.data, '$.text'), char(10)) AS text
+           FROM message m LEFT JOIN part p ON p.message_id = m.id ${showTools ? "" : "AND json_extract(p.data, '$.type') = 'text'"}
+           WHERE m.session_id = $sessionId
+           GROUP BY m.id ORDER BY m.time_created ASC LIMIT $limit`,
+          { $sessionId: sessionId, $limit: limit },
+        );
+      }
+
+      if (!rows || rows.length === 0) {
+        const filterDesc = roleFilter ? ` with role="${roleFilter}"` : "";
+        return `No messages found for session ${sessionId}${filterDesc}.`;
+      }
+      return formatMessageList(rows, { maxLength });
+    } catch (err) {
+      return `Failed to query messages: ${err instanceof Error ? err.message : String(err)}`;
+    }
+  },
+
+  message(args) {
+    const messageId = args.messageId as string;
+    const showTools = (args.showTools as boolean) ?? false;
+    const maxLength = args.maxLength as number | undefined;
+    if (!messageId) return "messageId is required.";
+
+    try {
+      type MessageRow = { role: string; time: string; text: string };
+      const partFilter = showTools ? "" : "AND json_extract(p.data, '$.type') = 'text'";
+
       const rows = runQuery<MessageRow>(
         `SELECT json_extract(m.data, '$.role') AS role,
                 datetime(m.time_created/1000, 'unixepoch', 'localtime') AS time,
                 GROUP_CONCAT(json_extract(p.data, '$.text'), char(10)) AS text
-         FROM message m LEFT JOIN part p ON p.message_id = m.id AND json_extract(p.data, '$.type') = 'text'
-         WHERE m.session_id = $sessionId GROUP BY m.id ORDER BY m.time_created ASC LIMIT $limit`,
-        { $sessionId: sessionId, $limit: limit },
+         FROM message m LEFT JOIN part p ON p.message_id = m.id ${partFilter}
+         WHERE m.id = $messageId
+         GROUP BY m.id`,
+        { $messageId: messageId },
       );
-      if (!rows || rows.length === 0) return `No messages found for session ${sessionId}.`;
-      return formatMessageList(rows);
+
+      if (!rows || rows.length === 0) return `No message found with ID ${messageId}.`;
+      return formatSingleMessage(rows[0], { maxLength });
     } catch (err) {
-      return `Failed to query messages: ${err instanceof Error ? err.message : String(err)}`;
+      return `Failed to query message: ${err instanceof Error ? err.message : String(err)}`;
     }
   },
 

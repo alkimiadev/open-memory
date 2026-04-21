@@ -40,10 +40,19 @@ Read-only router for all introspection operations. Call with `{tool: "<name>", a
 | `memory({tool: "summary"})` | Quick counts: projects, sessions, messages, todos |
 | `memory({tool: "sessions"})` | List recent sessions (filterable by project) |
 | `memory({tool: "messages", args: {sessionId: "..."}})` | Read a session's conversation |
+| `memory({tool: "messages", args: {sessionId: "...", role: "assistant"}})` | Read only assistant messages |
+| `memory({tool: "messages", args: {sessionId: "...", showTools: true}})` | Include tool-call output (hidden by default) |
+| `memory({tool: "message", args: {messageId: "msg_..."}})` | Read a single message by ID |
 | `memory({tool: "search", args: {query: "..."}})` | Search across all conversations |
 | `memory({tool: "compactions", args: {sessionId: "..."}})` | View compaction checkpoints |
 | `memory({tool: "context"})` | Current context window usage |
 | `memory({tool: "plans"})` | List or read saved plan files |
+
+**Filtering and output options:**
+
+- `role` — filter messages to `"user"`, `"assistant"`, or `"system"`
+- `showTools` — tool-call parts (Read, Write, Bash, etc.) are hidden by default; set `true` to include them
+- `maxLength` — override the default per-message character limit (2000 for `messages`, 8000 for `message`)
 
 ### `memory_compact`
 
@@ -78,6 +87,9 @@ Read-only tool for introspecting your session history and context state. Availab
 - `memory({tool: "summary"})` — quick counts of projects, sessions, messages, todos
 - `memory({tool: "sessions"})` — list recent sessions (useful for finding past work)
 - `memory({tool: "messages", args: {sessionId: "..."}})` — read a session's conversation
+- `memory({tool: "messages", args: {sessionId: "...", role: "assistant"}})` — read only assistant messages
+- `memory({tool: "messages", args: {sessionId: "...", showTools: true}})` — include tool-call output
+- `memory({tool: "message", args: {messageId: "msg_..."}})` — read a single message by ID
 - `memory({tool: "search", args: {query: "..."}})` — search across all conversations
 - `memory({tool: "compactions", args: {sessionId: "..."}})` — view compaction checkpoints
 - `memory({tool: "context"})` — check your current context window usage
@@ -108,8 +120,19 @@ bun install
 bun run build        # bun build + tsc declarations
 bun run typecheck    # tsc --noEmit
 bun run lint         # biome check
-bun run test         # bun test (16 tests)
+bun run test         # bun test (20 tests)
 ```
+
+### Local Testing
+
+OpenCode loads plugins from `~/.cache/opencode/node_modules/`, not your local repo. For local development, symlink your repo there:
+
+```bash
+rm -rf ~/.cache/opencode/node_modules/@alkdev/open-memory
+ln -s /path/to/open-memory ~/.cache/opencode/node_modules/@alkdev/open-memory
+```
+
+After rebuilding (`bun run build`), restart OpenCode to pick up changes.
 
 ## Architecture
 

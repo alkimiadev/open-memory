@@ -117,4 +117,4 @@ See [`docs/architecture.md`](docs/architecture.md) for detailed design decisions
 
 ## License
 
-Apache-2.0
+MIT OR Apache-2.0 at your option. See [LICENSE-MIT](LICENSE-MIT) or [LICENSE-APACHE](LICENSE-APACHE).

@@ -1,5 +1,4 @@
 dist/
 node_modules/
-*.lock
-bun.lock
+bun.lockb
 bunfig.toml

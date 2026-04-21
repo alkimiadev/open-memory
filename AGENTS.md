@@ -7,7 +7,7 @@
 ## Repository
 
 - **Git**: `git@git.alk.dev:alkdev/open-memory.git` (Gitea, mirrors to GitHub on release)
-- **License**: Apache-2.0
+- **License**: MIT OR Apache-2.0
 - **Runtime**: Bun
 - **Language**: TypeScript (strict, ESM, verbatimModuleSyntax)
 - **Linter**: Biome (`bun run lint`, `bun run format`)

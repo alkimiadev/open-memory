@@ -19,10 +19,18 @@
     "test": "bun test"
   },
   "author": "Alkimia Development",
-  "license": "Apache-2.0",
+  "license": "(MIT OR Apache-2.0)",
   "repository": {
     "type": "git",
     "url": "git@git.alk.dev:alkdev/open-memory.git"
+  },
+  "files": [
+    "dist",
+    "LICENSE-MIT",
+    "LICENSE-APACHE"
+  ],
+  "publishConfig": {
+    "access": "public"
   },
   "keywords": [
     "opencode",

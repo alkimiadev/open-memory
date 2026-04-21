@@ -382,16 +382,13 @@ export const createTools = (
       if (!providerID || !modelID)
         return "Cannot determine model for compaction. Please ensure the session has at least one message.";
 
-      try {
-        await ctx.client.session.summarize({
-          path: { id: context.sessionID },
-          body: { providerID, modelID },
-        });
-        const contextNote = info ? ` (was at ${info.percentage}%)` : "";
-        return `Compaction triggered successfully${contextNote}. The session will be summarized and you'll continue with freed context space.`;
-      } catch (err) {
-        return `Failed to trigger compaction: ${err instanceof Error ? err.message : String(err)}`;
-      }
+      const contextNote = info ? ` (was at ${info.percentage}%)` : "";
+      setTimeout(() => {
+        ctx.client.session
+          .summarize({ path: { id: context.sessionID }, body: { providerID, modelID } })
+          .catch(() => {});
+      }, 0);
+      return `Compaction triggered${contextNote}. The session will be summarized shortly and you'll continue with freed context space.`;
     },
   }),
 });

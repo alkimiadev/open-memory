@@ -65,7 +65,7 @@ src/
 | `memory` | Router for all read-only operations: summary, sessions, messages, search, compactions, context, plans, help. Call with `{tool: "help"}` to see available operations. |
 | `memory_compact` | Trigger compaction via `ctx.client.session.summarize()` — kept separate because it's a mutation |
 
-The `memory` tool dispatches to internal handlers by `tool` name, keeping the agent's visible tool count low (2 instead of 8) to minimize context bloat.
+The `memory` tool dispatches to internal handlers by `tool` name, keeping the agent's visible tool count low (2 instead of 9) to minimize context bloat.
 
 **Internal operations** (accessed via `memory({tool: "...", args: {...}})`):
 
@@ -74,6 +74,7 @@ The `memory` tool dispatches to internal handlers by `tool` name, keeping the ag
 | help | Show available operations, or details for a specific one | tool (optional) |
 | summary | Quick counts: projects, sessions, messages, todos | — |
 | sessions | List recent sessions, optionally filtered by project | limit, projectPath |
+| children | List sub-agent (child) sessions spawned from a parent session | sessionId |
 | messages | Read messages from a session, with filtering options | sessionId, limit, role, showTools, maxLength |
 | message | Read a single message by ID (cleaner output, no tool-call noise) | messageId, maxLength |
 | search | Text search across all conversations (LIKE-based) | query, limit |
@@ -196,6 +197,7 @@ Read-only tool for introspecting your session history and context state. Availab
 - `memory({tool: "help"})` — full reference with examples
 - `memory({tool: "summary"})` — quick counts of projects, sessions, messages, todos
 - `memory({tool: "sessions"})` — list recent sessions (useful for finding past work)
+- `memory({tool: "children", args: {sessionId: "ses_..."}})` — list sub-agent sessions spawned from a parent
 - `memory({tool: "messages", args: {sessionId: "..."}})` — read a session's conversation
 - `memory({tool: "messages", args: {sessionId: "...", role: "assistant"}})` — read only assistant messages
 - `memory({tool: "messages", args: {sessionId: "...", showTools: true}})` — include tool-call output

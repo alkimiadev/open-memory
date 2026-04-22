@@ -39,6 +39,7 @@ Read-only router for all introspection operations. Call with `{tool: "<name>", a
 | `memory({tool: "help"})` | Full reference with examples |
 | `memory({tool: "summary"})` | Quick counts: projects, sessions, messages, todos |
 | `memory({tool: "sessions"})` | List recent sessions (filterable by project) |
+| `memory({tool: "children", args: {sessionId: "ses_..."}})` | List sub-agent sessions spawned from a parent |
 | `memory({tool: "messages", args: {sessionId: "..."}})` | Read a session's conversation |
 | `memory({tool: "messages", args: {sessionId: "...", role: "assistant"}})` | Read only assistant messages |
 | `memory({tool: "messages", args: {sessionId: "...", showTools: true}})` | Include tool-call output (hidden by default) |
@@ -86,6 +87,7 @@ Read-only tool for introspecting your session history and context state. Availab
 - `memory({tool: "help"})` — full reference with examples
 - `memory({tool: "summary"})` — quick counts of projects, sessions, messages, todos
 - `memory({tool: "sessions"})` — list recent sessions (useful for finding past work)
+- `memory({tool: "children", args: {sessionId: "ses_..."}})` — list sub-agent sessions spawned from a parent
 - `memory({tool: "messages", args: {sessionId: "..."}})` — read a session's conversation
 - `memory({tool: "messages", args: {sessionId: "...", role: "assistant"}})` — read only assistant messages
 - `memory({tool: "messages", args: {sessionId: "...", showTools: true}})` — include tool-call output

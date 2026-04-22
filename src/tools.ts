@@ -19,6 +19,7 @@ Call \`memory({tool: "<name>", args: {...}})\` to use one.
 |------|-------------|----------|
 | summary | Count of projects, sessions, messages, todos | — |
 | sessions | List recent sessions, optionally filtered by project | limit, projectPath |
+| children | List sub-agent (child) sessions of a parent session | sessionId |
 | messages | Read messages from a session as formatted conversation | sessionId, limit, role, showTools, maxLength |
 | message | Read a single message by ID (cleaner output, no tool-call noise) | messageId, maxLength |
 | search | Text search across all conversations | query, limit |
@@ -32,12 +33,15 @@ Examples:
 - \`memory({tool: "compactions", args: {sessionId: "ses_abc", read: 1}})\`
 - \`memory({tool: "messages", args: {sessionId: "ses_abc", role: "assistant"}})\`
 - \`memory({tool: "message", args: {messageId: "msg_abc"}})\`
+- \`memory({tool: "children", args: {sessionId: "ses_abc"}})\`
 - \`memory({tool: "help", args: {tool: "search"}})\``;
 
 const TOOL_HELP: Record<string, string> = {
   summary: `**summary** — Quick counts: projects, sessions, messages, todos. No args needed.`,
   sessions: `**sessions** — List recent sessions with titles, update times, message counts.
 Args: limit (number, default 10), projectPath (string, optional filter by worktree path).`,
+  children: `**children** — List sub-agent (child) sessions spawned from a parent session. Useful for finding and inspecting worktree sub-agents.
+Args: sessionId (string, required — the parent session ID).`,
   messages: `**messages** — Read messages from a specific session as formatted conversation.
 By default, tool-call parts (Read, Write, Bash, etc.) are hidden to reduce noise. Set showTools: true to include them.
 Args: sessionId (string, required), limit (number, default 50), role (string, optional filter: "user", "assistant", "system"), showTools (boolean, default false), maxLength (number, default 2000 per message).`,
@@ -133,6 +137,50 @@ const handlers: Record<string, MemoryHandler> = {
       return formatSessionList(rows);
     } catch (err) {
       return `Failed to query sessions: ${err instanceof Error ? err.message : String(err)}`;
+    }
+  },
+
+  children(args) {
+    const sessionId = args.sessionId as string;
+    if (!sessionId) return "sessionId is required. Pass the parent session ID.";
+
+    try {
+      type ChildRow = {
+        id: string;
+        title: string;
+        updated: string;
+        msgs: number;
+      };
+
+      const rows = runQuery<ChildRow>(
+        `SELECT s.id, COALESCE(s.title, 'untitled') AS title,
+                datetime(s.time_updated/1000, 'unixepoch', 'localtime') AS updated,
+                (SELECT COUNT(*) FROM message m WHERE m.session_id = s.id) AS msgs
+         FROM session s WHERE s.parent_id = $parentId
+         ORDER BY s.time_updated DESC`,
+        { $parentId: sessionId },
+      );
+
+      if (!rows || rows.length === 0) return `No child sessions found for ${sessionId}.`;
+
+      const lines = [
+        `# Sub-agent Sessions (${rows.length})\n`,
+        "| ID | Title | Updated | Messages |",
+        "|----|-------|---------|----------|",
+      ];
+
+      for (const row of rows) {
+        const title = String(row.title ?? "untitled").slice(0, 40);
+        lines.push(`| ${row.id} | ${title} | ${row.updated} | ${row.msgs} |`);
+      }
+
+      lines.push(
+        "",
+        'Use memory({tool: "messages", args: {sessionId: "..."}}) to read a sub-agent\'s conversation.',
+      );
+      return lines.join("\n");
+    } catch (err) {
+      return `Failed to query child sessions: ${err instanceof Error ? err.message : String(err)}`;
     }
   },
 
@@ -378,7 +426,7 @@ export const createTools = (
       tool: z
         .string()
         .describe(
-          "Operation name: summary, sessions, messages, search, compactions, context, plans, help.",
+          "Operation name: summary, sessions, children, messages, search, compactions, context, plans, help.",
         ),
       args: z
         .record(z.string(), z.unknown())
